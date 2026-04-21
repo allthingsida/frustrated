@@ -1,6 +1,6 @@
 """Two full rotations while briefly shrinking and growing back."""
 
-from ida_frustrated_core import register_effect
+from core import register_effect
 
 
 def _paint(painter, snapshot, rect, progress, overlay):

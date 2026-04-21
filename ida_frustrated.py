@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import ida_idaapi
 
-import ida_frustrated_core as core
+import core
 
 
 class IdaFrustratedPlugin(ida_idaapi.plugin_t):

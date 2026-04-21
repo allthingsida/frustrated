@@ -2,7 +2,7 @@
 
 import math
 
-from ida_frustrated_core import QtCore, register_effect
+from core import QtCore, register_effect
 
 
 def _paint(painter, snapshot, rect, progress, overlay):

@@ -1,0 +1,129 @@
+"""Police: a siren light bar mounted across the top of the widget.
+
+A dark chrome housing with alternating red/blue dome lights and a
+centered "POLICE" label. Each run randomizes:
+  - flash pattern: wig-wag (opposite sides alternate), sync (all together),
+    or chase (one dome at a time runs left-to-right)
+  - domes per side (2-4)
+  - flash period (~450-700 ms)
+
+The bar covers the top ~15% of the widget and spills a soft downward
+glow onto the rest of the view when a side flashes.
+"""
+
+from __future__ import annotations
+
+import random
+
+from core import QtCore, QtGui, NO_PEN, register_scene
+from scenes._common import (
+    fade_envelope, with_alpha, ensure_state, strobe,
+    make_font, draw_centered_text,
+)
+
+
+_DURATION_MS = 18000
+
+_RED    = QtGui.QColor(255,  40,  40)
+_BLUE   = QtGui.QColor( 60, 120, 255)
+_BLACK  = QtGui.QColor( 14,  14,  18)
+_CHROME = QtGui.QColor( 75,  80,  90)
+_LABEL  = QtGui.QColor(225, 230, 235)
+
+_VARIANTS = ("wigwag", "sync", "chase")
+
+
+class _State:
+    def __init__(self):
+        rng = random.Random()
+        self.variant = rng.choice(_VARIANTS)
+        self.per_side = rng.randint(2, 4)
+        self.period_ms = rng.uniform(450.0, 700.0)
+
+
+def _bar_rect(rect):
+    h = max(32.0, min(60.0, rect.height() * 0.16))
+    return QtCore.QRectF(rect.left(), rect.top(), rect.width(), h)
+
+
+def _dome_on(state, elapsed_ms, index, total):
+    """Per-dome 0..1 on-value under the state's flash variant."""
+    period = state.period_ms
+    if state.variant == "wigwag":
+        phase = 0.0 if index < total // 2 else 0.5
+        return strobe(elapsed_ms, period, phase=phase, sharpness=2)
+    if state.variant == "sync":
+        return strobe(elapsed_ms, period, phase=0.0, sharpness=2)
+    # chase: each dome peaks at a staggered phase over one full cycle
+    return strobe(elapsed_ms, period * total, phase=index / total, sharpness=3)
+
+
+def _draw_housing(painter, bar, fade):
+    painter.setBrush(with_alpha(_BLACK, int(235 * fade)))
+    painter.drawRect(bar)
+    painter.setBrush(with_alpha(_CHROME, int(220 * fade)))
+    painter.drawRect(QtCore.QRectF(bar.left(), bar.top(),          bar.width(), 2))
+    painter.drawRect(QtCore.QRectF(bar.left(), bar.bottom() - 2.0, bar.width(), 2))
+
+
+def _draw_spill(painter, rect, bar, color, intensity, fade):
+    if intensity <= 0.05:
+        return
+    spill_h = min(rect.height() - bar.height(), bar.height() * 4)
+    spill = QtCore.QRectF(bar.left(), bar.bottom(), bar.width(), spill_h)
+    grad = QtGui.QLinearGradient(0, bar.bottom(), 0, bar.bottom() + spill_h)
+    grad.setColorAt(0.0, with_alpha(color, int(120 * intensity * fade)))
+    grad.setColorAt(1.0, with_alpha(color, 0))
+    painter.fillRect(spill, QtGui.QBrush(grad))
+
+
+def _draw_dome(painter, bar, cx, cy, color, on, fade):
+    r = bar.height() * 0.32
+    if on > 0.05:
+        halo = QtGui.QRadialGradient(cx, cy, bar.height() * 1.1)
+        halo.setColorAt(0.0, with_alpha(color, int(220 * on * fade)))
+        halo.setColorAt(0.5, with_alpha(color, int( 70 * on * fade)))
+        halo.setColorAt(1.0, with_alpha(color, 0))
+        painter.setBrush(QtGui.QBrush(halo))
+        painter.drawEllipse(QtCore.QPointF(cx, cy),
+                            bar.height() * 1.1, bar.height() * 1.1)
+    painter.setBrush(with_alpha(color, int((80 + 170 * on) * fade)))
+    painter.drawEllipse(QtCore.QPointF(cx, cy), r, r)
+    painter.setBrush(with_alpha(QtGui.QColor(255, 255, 255), int(130 * on * fade)))
+    painter.drawEllipse(QtCore.QPointF(cx - r * 0.3, cy - r * 0.35),
+                        r * 0.26, r * 0.18)
+
+
+def _paint(painter, rect, elapsed_ms, overlay):
+    state = ensure_state(overlay, _State)
+    fade = fade_envelope(elapsed_ms, _DURATION_MS)
+    painter.setClipRect(rect)
+    painter.setPen(QtGui.QPen(NO_PEN))
+
+    bar = _bar_rect(rect)
+    total = state.per_side * 2
+    half = bar.width() / 2.0
+    step = half / (state.per_side + 1)
+    cy = bar.center().y()
+
+    ons = [_dome_on(state, elapsed_ms, i, total) for i in range(total)]
+    red_avg  = sum(ons[:state.per_side]) / max(1, state.per_side)
+    blue_avg = sum(ons[state.per_side:]) / max(1, state.per_side)
+
+    _draw_spill(painter, rect, bar, _RED,  red_avg,  fade)
+    _draw_spill(painter, rect, bar, _BLUE, blue_avg, fade)
+    _draw_housing(painter, bar, fade)
+
+    for i in range(state.per_side):
+        cx = bar.left() + step * (i + 1)
+        _draw_dome(painter, bar, cx, cy, _RED, ons[i], fade)
+    for i in range(state.per_side):
+        cx = bar.left() + half + step * (i + 1)
+        _draw_dome(painter, bar, cx, cy, _BLUE, ons[state.per_side + i], fade)
+
+    label_font = make_font(max(10, int(bar.height() * 0.38)))
+    draw_centered_text(painter, bar.center().x(), bar.center().y(),
+                       "POLICE", label_font, with_alpha(_LABEL, int(220 * fade)))
+
+
+register_scene("police", _DURATION_MS, _paint)
