@@ -1,0 +1,16 @@
+{
+  "IDAMetadataDescriptorVersion": 1,
+  "plugin": {
+    "name": "ida-frustrated",
+    "entryPoint": "ida_frustrated.py",
+    "version": "0.0.1",
+    "idaVersions": ["9.0", "9.1", "9.2", "9.3"],
+    "description": "Frustrated-widget UI effects for IDA. Press Ctrl+Alt+T to animate the active widget; cycles through pluggable animation modules.",
+    "license": "MIT",
+    "categories": ["ui-ux-and-visualization"],
+    "urls": {
+      "repository": "https://github.com/allthingsida/ida-frustrated"
+    },
+    "authors": [{ "name": "Elias Bachaalany" }]
+  }
+}
