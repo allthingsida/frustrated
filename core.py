@@ -2,7 +2,7 @@
 
 Two registries feed a single fair shuffle:
 
-- **Effects** (`animations/*.py`) -- short one-shot painters that grab a widget
+- **Effects** (`effects/*.py`) -- short one-shot painters that grab a widget
   snapshot and animate it. Registered via `register_effect`. Gated by `_busy`
   so effects never overlap.
 - **Scenes**  (`scenes/*.py`)     -- long-running, timer-driven overlays that
@@ -334,13 +334,17 @@ def _spawn_scene(target, key, spec):
 
 
 def load_animations():
-    """Import every .py file under animations/ and scenes/ once so each registers."""
+    """Import every .py file under effects/ and scenes/ once so each registers.
+
+    Name kept as `load_animations` because "animation" is the umbrella term
+    for both classes (effect = one-shot, scene = long-running).
+    """
     if EFFECTS or SCENES:
         return
     plugin_dir = os.path.dirname(os.path.abspath(__file__))
     if plugin_dir not in sys.path:
         sys.path.insert(0, plugin_dir)
-    for pkg in ("animations", "scenes"):
+    for pkg in ("effects", "scenes"):
         directory = os.path.join(plugin_dir, pkg)
         if not os.path.isdir(directory):
             continue

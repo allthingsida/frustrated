@@ -12,7 +12,7 @@ import core
 class IdaFrustratedPlugin(ida_idaapi.plugin_t):
     flags = ida_idaapi.PLUGIN_KEEP
     comment = "Animate the active widget when you're frustrated."
-    help = "Press Ctrl+Alt+T. Drop .py files into animations/ to add effects."
+    help = "Press Ctrl+Alt+T. Drop .py files into effects/ or scenes/ to add animations."
     wanted_name = "IDA Frustrated"
     wanted_hotkey = "Ctrl-Alt-T"
 

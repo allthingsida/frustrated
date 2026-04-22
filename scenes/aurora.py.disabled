@@ -1,0 +1,199 @@
+"""Aurora: slow cyan/green/magenta ribbons undulating above a faint star field.
+
+The pool's only calm scene. A deep-blue gradient fills the widget, tiny
+twinkling stars scatter behind, and several wavy ribbons drift across
+with vertical alpha falloff so the widget underneath remains readable.
+Each ribbon has its own phase and hue cycle, giving a slowly-shifting
+northern-lights feel without ever becoming busy.
+"""
+
+from __future__ import annotations
+
+import math
+import random
+
+from core import QtCore, QtGui, NO_PEN, NO_BRUSH, register_scene
+from scenes._common import fade_envelope, with_alpha, ensure_state, pulse
+
+
+_DURATION_MS = 28000
+
+
+# Three anchor hues for the aurora cycle; each ribbon interpolates through
+# them at its own phase so adjacent bands rarely share the exact same color.
+_AURORA_HUES = (
+    QtGui.QColor( 60, 255, 170),  # green
+    QtGui.QColor( 60, 200, 255),  # cyan
+    QtGui.QColor(200, 120, 255),  # magenta
+)
+
+_N_CONTROLS = 7  # control points along each ribbon's horizontal span
+
+
+def _lerp_color(c1, c2, t):
+    return QtGui.QColor(
+        int(c1.red()   + (c2.red()   - c1.red())   * t),
+        int(c1.green() + (c2.green() - c1.green()) * t),
+        int(c1.blue()  + (c2.blue()  - c1.blue())  * t),
+    )
+
+
+def _cycle_color(phase):
+    """Pick a color along the green -> cyan -> magenta -> green loop."""
+    phase = phase % 1.0
+    if phase < 1 / 3.0:
+        return _lerp_color(_AURORA_HUES[0], _AURORA_HUES[1], phase * 3.0)
+    if phase < 2 / 3.0:
+        return _lerp_color(_AURORA_HUES[1], _AURORA_HUES[2], (phase - 1 / 3.0) * 3.0)
+    return _lerp_color(_AURORA_HUES[2], _AURORA_HUES[0], (phase - 2 / 3.0) * 3.0)
+
+
+class _Ribbon:
+    __slots__ = ("base_y_frac", "height_frac", "amp_frac", "sway_period_ms",
+                 "phase", "hue_phase", "hue_cycle_ms", "control_offsets",
+                 "drift_period_ms")
+
+    def __init__(self, rng):
+        self.base_y_frac = rng.uniform(0.18, 0.60)
+        self.height_frac = rng.uniform(0.14, 0.26)
+        self.amp_frac = rng.uniform(0.05, 0.11)
+        self.sway_period_ms = rng.uniform(8000.0, 14000.0)
+        self.phase = rng.uniform(0.0, 1.0)
+        self.hue_phase = rng.uniform(0.0, 1.0)
+        self.hue_cycle_ms = rng.uniform(9000.0, 14000.0)
+        self.drift_period_ms = rng.uniform(14000.0, 22000.0)
+        # Per-control offsets give each ribbon an irregular, non-sine shape.
+        self.control_offsets = [rng.uniform(-0.35, 0.35) for _ in range(_N_CONTROLS)]
+
+
+class _State:
+    def __init__(self):
+        self.rng = random.Random()
+        self.ribbons = [_Ribbon(self.rng)
+                        for _ in range(self.rng.randint(3, 4))]
+        # Stars: (x_frac, y_frac, twinkle_phase, period_ms, radius_px)
+        n_stars = self.rng.randint(40, 70)
+        self.stars = [(self.rng.random(),
+                       self.rng.uniform(0.0, 0.85),
+                       self.rng.uniform(0.0, 1.0),
+                       self.rng.uniform(2500.0, 5500.0),
+                       self.rng.choice((1.0, 1.0, 1.5, 2.0)))
+                      for _ in range(n_stars)]
+
+
+def _draw_sky(painter, rect, fade):
+    grad = QtGui.QLinearGradient(rect.center().x(), rect.top(),
+                                 rect.center().x(), rect.bottom())
+    grad.setColorAt(0.0, QtGui.QColor(4, 6, 22, int(120 * fade)))
+    grad.setColorAt(0.6, QtGui.QColor(8, 14, 38, int(90 * fade)))
+    grad.setColorAt(1.0, QtGui.QColor(4, 8, 22, int(60 * fade)))
+    painter.fillRect(rect, QtGui.QBrush(grad))
+
+
+def _draw_stars(painter, rect, state, elapsed_ms, fade):
+    painter.setPen(QtGui.QPen(NO_PEN))
+    for x_frac, y_frac, phase, period, radius in state.stars:
+        twinkle = 0.35 + 0.65 * pulse(elapsed_ms, period, phase)
+        alpha = int(200 * twinkle * fade)
+        if alpha <= 0:
+            continue
+        cx = rect.left() + rect.width() * x_frac
+        cy = rect.top() + rect.height() * y_frac
+        painter.setBrush(QtGui.QColor(235, 240, 255, alpha))
+        painter.drawEllipse(QtCore.QPointF(cx, cy), radius, radius)
+
+
+def _ribbon_center_y(ribbon, elapsed_ms, rect):
+    sway = math.sin(2 * math.pi * (elapsed_ms / ribbon.sway_period_ms + ribbon.phase))
+    return rect.top() + rect.height() * (ribbon.base_y_frac + ribbon.amp_frac * sway)
+
+
+def _ribbon_path(ribbon, elapsed_ms, rect, top_side):
+    """Build a smooth cubic path along the ribbon's top or bottom edge.
+
+    `top_side=True`  -> upper edge (left to right).
+    `top_side=False` -> lower edge (right to left, for path close).
+    """
+    center_y = _ribbon_center_y(ribbon, elapsed_ms, rect)
+    half_h = rect.height() * ribbon.height_frac * 0.5
+
+    # Small horizontal drift so the control-point phases shimmy over time.
+    drift = (elapsed_ms / ribbon.drift_period_ms) % 1.0
+
+    pts = []
+    for i in range(_N_CONTROLS):
+        t = i / (_N_CONTROLS - 1)
+        x = rect.left() + rect.width() * t
+        shimmer = math.sin(2 * math.pi * (t + drift + ribbon.phase)) * 0.35
+        edge_offset = (ribbon.control_offsets[i] + shimmer) * half_h
+        y = center_y + edge_offset + (half_h if not top_side else -half_h)
+        pts.append(QtCore.QPointF(x, y))
+
+    path = QtGui.QPainterPath()
+    if top_side:
+        path.moveTo(pts[0])
+        for i in range(1, len(pts)):
+            prev = pts[i - 1]
+            cur = pts[i]
+            mid_x = (prev.x() + cur.x()) / 2.0
+            path.cubicTo(QtCore.QPointF(mid_x, prev.y()),
+                         QtCore.QPointF(mid_x, cur.y()),
+                         cur)
+    else:
+        path.moveTo(pts[-1])
+        for i in range(len(pts) - 2, -1, -1):
+            nxt = pts[i + 1]
+            cur = pts[i]
+            mid_x = (nxt.x() + cur.x()) / 2.0
+            path.cubicTo(QtCore.QPointF(mid_x, nxt.y()),
+                         QtCore.QPointF(mid_x, cur.y()),
+                         cur)
+    return path, pts
+
+
+def _draw_ribbon(painter, rect, ribbon, elapsed_ms, fade):
+    top_path, _ = _ribbon_path(ribbon, elapsed_ms, rect, top_side=True)
+    bot_path, _ = _ribbon_path(ribbon, elapsed_ms, rect, top_side=False)
+    # Stitch into a single closed region: top edge left->right, bottom edge right->left.
+    full = QtGui.QPainterPath(top_path)
+    full.connectPath(bot_path)
+    full.closeSubpath()
+
+    hue_t = (elapsed_ms / ribbon.hue_cycle_ms + ribbon.hue_phase) % 1.0
+    color = _cycle_color(hue_t)
+
+    center_y = _ribbon_center_y(ribbon, elapsed_ms, rect)
+    half_h = rect.height() * ribbon.height_frac * 0.5
+
+    grad = QtGui.QLinearGradient(rect.center().x(), center_y - half_h,
+                                 rect.center().x(), center_y + half_h)
+    grad.setColorAt(0.0, with_alpha(color, 0))
+    grad.setColorAt(0.5, with_alpha(color, int(120 * fade)))
+    grad.setColorAt(1.0, with_alpha(color, 0))
+
+    painter.setPen(QtGui.QPen(NO_PEN))
+    painter.setBrush(QtGui.QBrush(grad))
+    painter.drawPath(full)
+
+    # Thin bright top edge (the characteristic aurora "crease").
+    pen = QtGui.QPen(with_alpha(color, int(180 * fade)))
+    pen.setWidthF(1.4)
+    painter.setPen(pen)
+    painter.setBrush(QtGui.QBrush(NO_BRUSH))
+    painter.drawPath(top_path)
+
+
+def _paint(painter, rect, elapsed_ms, overlay):
+    state = ensure_state(overlay, _State)
+    fade = fade_envelope(elapsed_ms, _DURATION_MS)
+
+    painter.setClipRect(rect)
+    painter.setPen(QtGui.QPen(NO_PEN))
+
+    _draw_sky(painter, rect, fade)
+    _draw_stars(painter, rect, state, elapsed_ms, fade)
+    for ribbon in state.ribbons:
+        _draw_ribbon(painter, rect, ribbon, elapsed_ms, fade)
+
+
+register_scene("aurora", _DURATION_MS, _paint)

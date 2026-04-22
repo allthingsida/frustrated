@@ -1,0 +1,221 @@
+"""Disco: swaying colored spotlight cones, a rotating disco ball, and beat sparkles.
+
+Four triangular spotlight cones project down from the top of the widget and
+sweep side-to-side at different rates, their alphas pulsing to an invisible
+beat. A small rotating disco-ball glyph sits centered at the top and sheds
+sparkles on every beat. Designed as a visually louder replacement for the
+old police scene -- the cones cover the whole widget with colored light
+instead of a thin top bar.
+"""
+
+from __future__ import annotations
+
+import math
+import random
+
+from core import QtCore, QtGui, NO_PEN, register_scene
+from scenes._common import (
+    fade_envelope, with_alpha, ensure_state, tick_dt_ms, pulse,
+)
+
+
+_DURATION_MS = 22000
+
+# Saturated neon palette -- anything less looks washed out under low alpha.
+_PALETTE = (
+    QtGui.QColor(255,  60, 200),  # magenta
+    QtGui.QColor( 60, 220, 255),  # cyan
+    QtGui.QColor(120, 255,  90),  # lime
+    QtGui.QColor(255, 210,  60),  # gold
+    QtGui.QColor(255,  90,  90),  # coral
+    QtGui.QColor(180, 120, 255),  # violet
+)
+
+
+class _Cone:
+    __slots__ = ("color", "base_x_frac", "sweep_amp_frac",
+                 "sweep_period_ms", "phase", "spread_frac")
+
+    def __init__(self, rng, color):
+        self.color = color
+        self.base_x_frac = rng.uniform(0.25, 0.75)
+        self.sweep_amp_frac = rng.uniform(0.35, 0.55)
+        self.sweep_period_ms = rng.uniform(2800.0, 5200.0)
+        self.phase = rng.uniform(0.0, 1.0)
+        self.spread_frac = rng.uniform(0.28, 0.42)  # cone base half-width
+
+    def current_cx(self, elapsed_ms, rect):
+        t = elapsed_ms / self.sweep_period_ms + self.phase
+        offset = self.sweep_amp_frac * math.sin(2 * math.pi * t)
+        return rect.left() + rect.width() * (self.base_x_frac + offset)
+
+
+class _Sparkle:
+    __slots__ = ("x", "y", "vx", "vy", "birth_ms", "ttl_ms", "color", "size")
+
+    def __init__(self, rng, x, y, color):
+        angle = rng.uniform(0.0, 2 * math.pi)
+        speed = rng.uniform(20.0, 60.0)
+        self.x = x
+        self.y = y
+        self.vx = math.cos(angle) * speed
+        self.vy = math.sin(angle) * speed - 30.0  # slight upward bias
+        self.birth_ms = 0.0
+        self.ttl_ms = rng.uniform(700.0, 1400.0)
+        self.color = color
+        self.size = rng.uniform(1.6, 3.4)
+
+
+class _State:
+    def __init__(self):
+        self.rng = random.Random()
+        self.beat_ms = self.rng.uniform(420.0, 620.0)
+        n_cones = self.rng.choice((3, 4))
+        colors = list(_PALETTE)
+        self.rng.shuffle(colors)
+        self.cones = [_Cone(self.rng, colors[i]) for i in range(n_cones)]
+        self.sparkles = []
+        self.last_beat_idx = -1
+        self.last_tick_ms = 0
+
+
+def _draw_backdrop(painter, rect, fade):
+    """Darken the widget slightly so the cones and sparkles pop."""
+    painter.fillRect(rect, QtGui.QColor(8, 4, 20, int(55 * fade)))
+
+
+def _draw_cone(painter, rect, cone, elapsed_ms, fade, beat_mult):
+    """A single spotlight cone: triangular polygon with a bright-to-transparent gradient."""
+    cx = cone.current_cx(elapsed_ms, rect)
+    apex_y = rect.top()
+    base_y = rect.bottom()
+    base_half = rect.width() * cone.spread_frac
+
+    path = QtGui.QPainterPath()
+    path.moveTo(cx - 8, apex_y)
+    path.lineTo(cx + 8, apex_y)
+    path.lineTo(cx + base_half, base_y)
+    path.lineTo(cx - base_half, base_y)
+    path.closeSubpath()
+
+    top_alpha = int(170 * fade * beat_mult)
+    mid_alpha = int(90 * fade * beat_mult)
+
+    grad = QtGui.QLinearGradient(cx, apex_y, cx, base_y)
+    grad.setColorAt(0.0, with_alpha(cone.color, top_alpha))
+    grad.setColorAt(0.55, with_alpha(cone.color, mid_alpha))
+    grad.setColorAt(1.0, with_alpha(cone.color, 0))
+
+    painter.setPen(QtGui.QPen(NO_PEN))
+    painter.setBrush(QtGui.QBrush(grad))
+    painter.drawPath(path)
+
+    # Bright point-source at the apex for a "spotlight head" feel.
+    head = QtGui.QRadialGradient(cx, apex_y + 6, 16)
+    head.setColorAt(0.0, with_alpha(cone.color, int(230 * fade * beat_mult)))
+    head.setColorAt(1.0, with_alpha(cone.color, 0))
+    painter.setBrush(QtGui.QBrush(head))
+    painter.drawEllipse(QtCore.QPointF(cx, apex_y + 6), 16, 16)
+
+
+def _draw_disco_ball(painter, rect, elapsed_ms, fade):
+    """A small rotating ball at top-center with a crosshatched specular pattern."""
+    r = max(10, int(min(rect.width(), rect.height()) * 0.035))
+    cx = rect.left() + rect.width() / 2.0
+    cy = rect.top() + r + 6
+
+    # Shadow base.
+    painter.setPen(QtGui.QPen(NO_PEN))
+    painter.setBrush(with_alpha(QtGui.QColor(30, 30, 45), int(200 * fade)))
+    painter.drawEllipse(QtCore.QPointF(cx, cy), r, r)
+
+    # Facet highlights via rotating crosshatch.
+    painter.save()
+    painter.translate(cx, cy)
+    painter.rotate((elapsed_ms / 40.0) % 360.0)
+    pen = QtGui.QPen(with_alpha(QtGui.QColor(220, 230, 255), int(150 * fade)))
+    pen.setWidthF(1.0)
+    painter.setPen(pen)
+    step = max(2, r // 3)
+    for dy in range(-r, r + 1, step):
+        painter.drawLine(-r, dy, r, dy)
+    for dx in range(-r, r + 1, step):
+        painter.drawLine(dx, -r, dx, r)
+    painter.restore()
+
+    # Specular glint.
+    glint = QtGui.QRadialGradient(cx - r * 0.35, cy - r * 0.45, r * 0.6)
+    glint.setColorAt(0.0, with_alpha(QtGui.QColor(255, 255, 255), int(230 * fade)))
+    glint.setColorAt(1.0, with_alpha(QtGui.QColor(255, 255, 255), 0))
+    painter.setBrush(QtGui.QBrush(glint))
+    painter.drawEllipse(QtCore.QPointF(cx - r * 0.35, cy - r * 0.45),
+                        r * 0.6, r * 0.6)
+
+    # A couple of dropped sparkle rays beneath the ball.
+    painter.setPen(QtGui.QPen(with_alpha(QtGui.QColor(255, 255, 255),
+                                         int(60 * fade)), 1.0))
+    for k in range(6):
+        a = (elapsed_ms / 600.0 + k * math.pi / 3.0)
+        dx = math.cos(a) * r * 2.0
+        dy = abs(math.sin(a)) * r * 1.5
+        painter.drawLine(QtCore.QPointF(cx, cy + r),
+                         QtCore.QPointF(cx + dx, cy + r + dy))
+
+
+def _spawn_beat_sparkles(state, rect, elapsed_ms):
+    """On each new beat, emit sparkles from near each cone's current apex."""
+    beat_idx = int(elapsed_ms / state.beat_ms)
+    if beat_idx == state.last_beat_idx:
+        return
+    state.last_beat_idx = beat_idx
+    for cone in state.cones:
+        cx = cone.current_cx(elapsed_ms, rect)
+        cy = rect.top() + 8
+        for _ in range(3):
+            s = _Sparkle(state.rng, cx + state.rng.uniform(-6, 6),
+                         cy + state.rng.uniform(-2, 4), cone.color)
+            s.birth_ms = elapsed_ms
+            state.sparkles.append(s)
+
+
+def _update_and_draw_sparkles(painter, state, elapsed_ms, dt_ms, fade):
+    alive = []
+    dt_s = dt_ms / 1000.0
+    painter.setPen(QtGui.QPen(NO_PEN))
+    for s in state.sparkles:
+        age = elapsed_ms - s.birth_ms
+        if age >= s.ttl_ms:
+            continue
+        s.x += s.vx * dt_s
+        s.y += s.vy * dt_s
+        s.vy += 40.0 * dt_s  # slight gravity
+        life = 1.0 - age / s.ttl_ms
+        alpha = int(230 * life * fade)
+        painter.setBrush(with_alpha(s.color, alpha))
+        painter.drawEllipse(QtCore.QPointF(s.x, s.y), s.size, s.size)
+        alive.append(s)
+    state.sparkles = alive
+
+
+def _paint(painter, rect, elapsed_ms, overlay):
+    state = ensure_state(overlay, _State)
+    fade = fade_envelope(elapsed_ms, _DURATION_MS)
+    dt_ms = tick_dt_ms(state, elapsed_ms)
+
+    painter.setClipRect(rect)
+    painter.setPen(QtGui.QPen(NO_PEN))
+
+    _draw_backdrop(painter, rect, fade)
+
+    # Beat pulse stays in [0.55, 1.0] so cones never fully dim -- disco, not strobe.
+    beat_mult = 0.55 + 0.45 * pulse(elapsed_ms, state.beat_ms)
+
+    for cone in state.cones:
+        _draw_cone(painter, rect, cone, elapsed_ms, fade, beat_mult)
+
+    _spawn_beat_sparkles(state, rect, elapsed_ms)
+    _update_and_draw_sparkles(painter, state, elapsed_ms, dt_ms, fade)
+    _draw_disco_ball(painter, rect, elapsed_ms, fade)
+
+
+register_scene("disco", _DURATION_MS, _paint)

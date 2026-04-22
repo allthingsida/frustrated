@@ -21,13 +21,13 @@ per round before any repeats, and the same one never fires twice in a row.
 
 | Kind | Lives in | Lifetime | Interacts with widget? | Concurrency |
 |------|----------|----------|------------------------|-------------|
-| **Effect** | `animations/*.py` | one-shot (~400 ms - 1.5 s) | takes a snapshot; widget is briefly frozen under the overlay | one at a time (rapid presses are coalesced) |
+| **Effect** | `effects/*.py` | one-shot (~400 ms - 1.5 s) | takes a snapshot; widget is briefly frozen under the overlay | one at a time (rapid presses are coalesced) |
 | **Scene**  | `scenes/*.py`     | long-running (~18-30 s)   | non-blocking, low-alpha overlay; the widget stays fully interactive underneath | **one active per widget** -- triggering another scene on the same widget cancels it; scenes on other widgets keep running independently |
 
 Shipped out of the box:
 
 - **Effects** -- `rage`, `rotate`, `shake`, `zoom`.
-- **Scenes:**
+- **Scenes (enabled by default):**
   - `weather` -- a 30 s sunny -> stormy -> clearing story with drifting
     clouds, a sun, rain streaks, and lightning bolts.
   - `invasion` -- 20 s flock of the host application's icon swooping
@@ -36,17 +36,34 @@ Shipped out of the box:
   - `invaders` -- 30 s self-playing Space Invaders simulation: 5 x 11
     alien grid, auto-firing player, bunkers, UFO flyovers, score HUD,
     rendered on a virtual 224 x 256 arcade canvas scaled to fit.
-  - `police` -- 18 s red/blue siren strobes from the top corners with a
-    white sweep beam and strobing "POLICE" word.
+  - `lava_lamp` -- 30 s of warm metaball-ish blobs rising and sinking
+    in one of three palettes (warm orange, acid green, electric pink).
+    Pure ambient mood.
+  - `matrix_rain` -- 25 s pure Matrix-style digital rain: dense
+    katakana-flavoured glyph columns at varied speeds with a bright
+    white leading glyph and a green fading tail. No watermark, no
+    chrome -- just the rain.
+- **Scenes (shipped *disabled* -- rename off the `.disabled` suffix to enable):**
+  - `police` -- 18 s red/blue siren bar with wig-wag / sync / chase
+    flash patterns. The canonical example of the `.disabled` convention
+    below.
   - `fbi` -- 18 s yellow/black caution-tape bars top & bottom, a
     wandering flashlight cone, and a sliding "FBI -- OPEN UP!" banner.
-  - `nsa` -- 25 s Matrix-style green glyph rain, rotating
+  - `nsa` -- 25 s green glyph rain, rotating
     "CLASSIFIED / TOP SECRET / GHIDRA" watermark, and a pulsing REC
     indicator. Tribute to the NSA-birthed roots of Ghidra.
+    (Superseded by `matrix_rain` for pure-rain vibe.)
+  - `disco` -- 22 s of swaying magenta/cyan/lime/gold spotlight cones
+    pulsing to a beat, with a rotating disco ball and sparkles.
+  - `terminal` -- 25 s green-phosphor hacker console: fake
+    nmap/ssh/root lines type out in monospace over a CRT scanline
+    overlay, with occasional red `[!!]` alarm lines.
+  - `aurora` -- 28 s of slow cyan/green/magenta aurora ribbons
+    undulating above a faint twinkling star field.
 
 ## Demo
 
-See it in action on [X / @allthingsida](https://x.com/allthingsida/status/2046476512719958414?s=20).
+See it in action on [X / @allthingsida](https://x.com/allthingsida/status/2046514898180657517).
 
 ## Install
 
@@ -76,7 +93,7 @@ Start IDA; the plugin shows up as **IDA Frustrated** under Edit > Plugins.
 
 ## Adding effects (drop-in)
 
-Effects live as individual Python files under `animations/`. On plugin load
+Effects live as individual Python files under `effects/`. On plugin load
 every `.py` file in that folder is imported in alphabetical order and is
 expected to register one or more effects at import time.
 
@@ -93,7 +110,7 @@ paint(painter, snapshot, rect, progress, overlay)
 - `overlay`  - the `EffectOverlay`; call `overlay.erase_original(painter, rect)`
   first if you want to clear the real widget before drawing.
 
-Minimal example -- drop this as `animations/flash.py`:
+Minimal example -- drop this as `effects/flash.py`:
 
 ```python
 from core import QtGui, register_effect
@@ -146,6 +163,29 @@ geometry every tick, and self-destruct when their duration elapses or
 the target widget disappears. Scenes are keyed per widget: triggering a
 new scene on the same widget cancels that widget's current scene, but
 scenes running on *other* widgets keep going independently.
+
+## How effects and scenes are discovered
+
+At plugin load, `core.load_animations()` walks `effects/` and `scenes/`
+alphabetically and imports every `.py` file in each. Each imported
+module registers itself with `register_effect(...)` or
+`register_scene(...)` at import time — that's the only thing that puts
+it into the rotation. Files whose names start with `_` or `.` are
+skipped (that's how `scenes/_common.py` stays out of the pool).
+
+## Disabling an effect or scene
+
+To take an animation out of the rotation without deleting it, rename
+the file to add a `.disabled` suffix:
+
+```sh
+git mv scenes/police.py scenes/police.py.disabled
+```
+
+The loader only imports files that end in `.py`, so the renamed file
+is skipped entirely — the module is never imported, it never calls
+`register_*`, and it never enters the shuffled deck. Re-enable by
+stripping the suffix (`git mv scenes/police.py.disabled scenes/police.py`).
 
 ## Manual trigger
 
