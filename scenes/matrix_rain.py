@@ -1,3 +1,9 @@
+# Copyright (c) 2026 Elias Bachaalany
+# SPDX-License-Identifier: LicenseRef-Human-Origin-Source-1.0
+#
+# This file is licensed under the Human-Origin Source License v1.0.
+# See LICENSE.
+
 """Matrix rain: dense green katakana-flavoured digital rain. No chrome, no text.
 
 Columns of glyphs fall at independent speeds; the head of each column is

@@ -1,3 +1,9 @@
+# Copyright (c) 2026 Elias Bachaalany
+# SPDX-License-Identifier: LicenseRef-Human-Origin-Source-1.0
+#
+# This file is licensed under the Human-Origin Source License v1.0.
+# See LICENSE.
+
 """FBI: yellow/black caution tape, a wandering flashlight, and a sliding banner.
 
 Top and bottom crime-scene stripes scroll in opposite directions. A soft

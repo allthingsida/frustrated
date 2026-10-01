@@ -200,4 +200,6 @@ core.frustrate()     # play a random effect or scene on the focused widget
 
 ## License
 
-MIT -- see [LICENSE](LICENSE). Written by Elias Bachaalany.
+Human-Origin Source License v1.0 (source-available) -- see [LICENSE](LICENSE) and the per-file
+`SPDX-License-Identifier: LicenseRef-Human-Origin-Source-1.0` headers. Copyright (c) 2026 Elias Bachaalany.
+Written by Elias Bachaalany.

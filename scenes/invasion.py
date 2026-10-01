@@ -1,3 +1,9 @@
+# Copyright (c) 2026 Elias Bachaalany
+# SPDX-License-Identifier: LicenseRef-Human-Origin-Source-1.0
+#
+# This file is licensed under the Human-Origin Source License v1.0.
+# See LICENSE.
+
 """Invasion: copies of the app/window icon swoop, arc, and spiral across the widget.
 
 A tip of the hat to Ghidra's `AnimationUtils.showTheDragonOverComponent(...)`

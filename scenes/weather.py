@@ -1,3 +1,9 @@
+# Copyright (c) 2026 Elias Bachaalany
+# SPDX-License-Identifier: LicenseRef-Human-Origin-Source-1.0
+#
+# This file is licensed under the Human-Origin Source License v1.0.
+# See LICENSE.
+
 """Weather: a 30-second atmospheric story -- sunny, gloomy, storm, clearing.
 
 Continuously interpolates between keyframes. Raindrops, drifting clouds,

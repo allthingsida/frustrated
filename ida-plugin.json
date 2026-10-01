@@ -3,14 +3,15 @@
   "plugin": {
     "name": "ida-frustrated",
     "entryPoint": "ida_frustrated.py",
-    "version": "0.0.2",
-    "idaVersions": ["9.0", "9.1", "9.2", "9.3"],
+    "version": "0.0.3",
+    "idaVersions": ["9.0", "9.1", "9.2", "9.3", "9.4"],
     "description": "Frustrated-widget UI effects for IDA. Press Ctrl+Alt+T to animate the active widget; cycles through pluggable animation modules.",
-    "license": "MIT",
+    "license": "LicenseRef-Human-Origin-Source-1.0",
     "categories": ["ui-ux-and-visualization"],
+    "keywords": ["ui", "animation", "qt", "fun", "widgets"],
     "urls": {
-      "repository": "https://github.com/allthingsida/ida-frustrated"
+      "repository": "https://github.com/allthingsida/frustrated"
     },
-    "authors": [{ "name": "Elias Bachaalany" }]
+    "authors": [{ "name": "Elias Bachaalany", "email": "elias.bachaalany@gmail.com" }]
   }
 }

@@ -1,3 +1,9 @@
+# Copyright (c) 2026 Elias Bachaalany
+# SPDX-License-Identifier: LicenseRef-Human-Origin-Source-1.0
+#
+# This file is licensed under the Human-Origin Source License v1.0.
+# See LICENSE.
+
 """Police: a siren light bar mounted across the top of the widget.
 
 A dark chrome housing with alternating red/blue dome lights and a

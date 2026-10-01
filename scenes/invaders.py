@@ -1,3 +1,9 @@
+# Copyright (c) 2026 Elias Bachaalany
+# SPDX-License-Identifier: LicenseRef-Human-Origin-Source-1.0
+#
+# This file is licensed under the Human-Origin Source License v1.0.
+# See LICENSE.
+
 """Space Invaders: a ~30-second self-playing arcade simulation.
 
 Canonical SI in miniature: 5 x 11 alien grid with three alien types
